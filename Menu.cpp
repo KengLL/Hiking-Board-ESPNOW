@@ -13,7 +13,9 @@ enum MenuState {
     MAIN_MENU,
     INBOX,
     MSG_SELECT,
-    PAIRING_MODE
+    PAIRING_MODE,
+    PAIRING_REQUEST,
+    PAIRING_KEYBOARD
 };
 
 static MenuState menuState = MAIN_MENU;
@@ -23,7 +25,8 @@ static const int menuCount = 3;
 
 // Debounce timing (ms)
 static unsigned long lastActionTime = 0;
-static const unsigned long debounceDelay = 700; // Increased from 200 to 300ms
+static const unsigned long debounceDelay = 700; // Default debounce
+static const unsigned long keyboardDebounceDelay = 1200; // Longer debounce for keyboard
 
 static uint8_t msgSelectIndex = 0;
 static const uint8_t msgCount = 8; // Only 0-7 valid codes for message select
@@ -167,7 +170,6 @@ static void showMsgSelect() {
 }
 
 // Pairing state is now managed by Device
-static bool showKeyboard = false;
 static char initials[3] = {'A', 'A', '\0'};
 static int keyboardPos = 0; // 0 or 1
 
@@ -222,50 +224,79 @@ static void showInitialsKeyboard() {
     display.display();
 }
 
-// Fix: convert std::string to String using .c_str()
-static String macToString_Arduino(const std::vector<uint8_t>& mac) {
-    return String(macToString(mac.data(), MAC_SIZE).c_str());
-}
+
 
 static void showPairingMode() {
     display.clearDisplay();
-
-
-
     // Top: own MAC
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    String macStr = String(macToString(device.getMACAddress(), MAC_SIZE).c_str());
+    String macStr = macToString_Arduino(device.getMACAddress(), MAC_SIZE);
     int16_t x1, y1; uint16_t w, h;
     display.getTextBounds(macStr, 0, 0, &x1, &y1, &w, &h);
     display.setCursor((display.width() - w) / 2, 0);
     display.print(macStr);
 
-    // Middle: pairing status or found device
+    // Middle: pairing status
     display.setTextSize(2);
+    String middle = "Pairing...";
+    display.getTextBounds(middle, 0, 0, &x1, &y1, &w, &h);
+    int middleY = (display.height() - h) / 2;
+    display.setCursor((display.width() - w) / 2, middleY);
+    display.print(middle);
+
+    // Bottom: Back
+    display.setTextSize(1);
+    int bottomY = display.height() - 10;
+    display.setCursor(0, bottomY);
+    display.print("Back");
+
+    display.display();
+}
+
+static void showPairingRequest() {
+    display.clearDisplay();
+    // Top: own MAC
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    String macStr = macToString_Arduino(device.getMACAddress(), MAC_SIZE);
+    int16_t x1, y1; uint16_t w, h;
+    display.getTextBounds(macStr, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((display.width() - w) / 2, 0);
+    display.print(macStr);
+
+    // Middle: Requesting device MAC
+    display.setTextSize(1);
     String middle;
-    if (!device.hasPendingPairMAC()) {
-        middle = "Pairing...";
+    if (device.hasPendingPairMAC()) {
+        middle = macToString_Arduino(device.getPendingPairMAC());
     } else {
-        std::vector<uint8_t> mac(device.getPendingPairMAC().begin(), device.getPendingPairMAC().end());
-        middle = macToString_Arduino(mac);
+        middle = "No Request";
     }
     display.getTextBounds(middle, 0, 0, &x1, &y1, &w, &h);
     int middleY = (display.height() - h) / 2;
     display.setCursor((display.width() - w) / 2, middleY);
     display.print(middle);
 
-    // Bottom: x (back), v (pair), > (reject)
-    display.setTextSize(1);
-    int bottomY = display.height() - 10;
-    display.setCursor(0, bottomY);
-    display.print("Back");
+    // Bottom: x (decline), v (accept), and "Pair?" centered in font size 2
+    display.setTextSize(2);
+    // x on left
+    String xStr = "x";
+    display.getTextBounds(xStr, 0, 0, &x1, &y1, &w, &h);
+    int iconY = display.height() - h;
+    display.setCursor(0, iconY);
+    display.print(xStr);
+    // v on right
     String v = "v";
-    display.setCursor(display.width() / 2 - 3, bottomY);
+    display.getTextBounds(v, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(display.width() - w, iconY);
     display.print(v);
-    String arrow = ">";
-    display.setCursor(display.width() - 8, bottomY);
-    display.print(arrow);
+    // "Pair?" centered, font size 2
+    String pairStr = "Pair?";
+    display.getTextBounds(pairStr, 0, 0, &x1, &y1, &w, &h);
+    int pairY = display.height() - h; // align bottom
+    display.setCursor((display.width() - w) / 2, pairY);
+    display.print(pairStr);
 
     display.display();
 }
@@ -275,7 +306,6 @@ void menuSetup() {
     showMainMenu();
     device.clearPendingPairMAC();
     device.clearDeclinedPairMACs();
-    showKeyboard = false;
     initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
     keyboardPos = 0;
     kbRow = 0;
@@ -285,7 +315,11 @@ void menuSetup() {
 
 void menuLoop() {
     unsigned long now = millis();
-    if (now - lastActionTime < debounceDelay) {
+    unsigned long effectiveDebounce = debounceDelay;
+    if (menuState == PAIRING_KEYBOARD) {
+        effectiveDebounce = keyboardDebounceDelay;
+    }
+    if (now - lastActionTime < effectiveDebounce) {
         return; // Debounce: ignore input if not enough time has passed
     }
     switch (menuState) {
@@ -341,86 +375,117 @@ void menuLoop() {
             break;
         }
         case PAIRING_MODE:
-            if (showKeyboard) {
-                if (isButtonClicked(LEFT_BTN_PIN)) {
-                    // Move up a row (wrap)
-                    kbRow = (kbRow + 2) % 3;
-                    showInitialsKeyboard();
-                    lastActionTime = now;
-                } else if (isButtonClicked(RIGHT_BTN_PIN)) {
-                    // Move right a column (wrap)
-                    kbCol = (kbCol + 1) % 9;
-                    showInitialsKeyboard();
-                    lastActionTime = now;
-                } else if (isButtonClicked(SLCT_BTN_PIN)) {
-                    char selected = keyboard[kbRow][kbCol];
-                    if (selected == '<') {
-                        // Delete last character
-                        if (keyboardPos > 0) {
-                            --keyboardPos;
-                            initials[keyboardPos] = 'A';
-                        }
-                        showInitialsKeyboard();
-                    } else {
-                        initials[keyboardPos] = selected;
-                        if (keyboardPos == 0) {
-                            keyboardPos = 1;
-                            kbRow = 0; kbCol = 0;
-                            showInitialsKeyboard();
-                        } else {
-                            // Confirm initials, add to peer list
-                            {
-                                std::array<uint8_t, MAC_SIZE> mac = device.getPendingPairMAC();
-                                device.addPeer(mac.data(), String(initials).c_str());
-                                device.clearPendingPairMAC();
-                            }
-                            showKeyboard = false;
-                            keyboardPos = 0;
-                            kbRow = 0; kbCol = 0;
-                            initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
-                            showPairingMode();
-                        }
-                    }
-                    lastActionTime = now;
+        {
+            // If a pending pair MAC appears, transition to pairing request
+            if (device.hasPendingPairMAC()) {
+                menuState = PAIRING_REQUEST;
+                showPairingRequest();
+                lastActionTime = now;
+                break;
+            }
+            // Normal pairing mode UI and controls
+            if (isButtonClicked(LEFT_BTN_PIN)) {
+                menuState = MAIN_MENU;
+                showMainMenu();
+                // Reset pairing state
+                device.clearPendingPairMAC();
+                device.clearDeclinedPairMACs();
+                initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
+                keyboardPos = 0;
+                kbRow = 0;
+                kbCol = 0;
+                // Restore user state to previous (only if currently PAIRING_CODE)
+                if (device.getUserState() == PAIRING_CODE) {
+                    device.setUserState(prevUserState);
                 }
-            } else {
+                lastActionTime = now;
+            }
+            break;
+        }
+        case PAIRING_REQUEST:
+        {
+            // Handle pairing request acceptance or decline
+            if (isButtonClicked(LEFT_BTN_PIN)) {
+                // Decline: add to declined list, clear pending, return to pairing mode
                 if (device.hasPendingPairMAC()) {
-                    // Show pending pairing MAC
-                    showPairingMode();
-                }
-                if (isButtonClicked(LEFT_BTN_PIN)) {
-                    menuState = MAIN_MENU;
-                    showMainMenu();
-                    // Reset pairing state
+                    device.addDeclinedPairMAC(device.getPendingPairMAC());
                     device.clearPendingPairMAC();
-                    device.clearDeclinedPairMACs();
-                    showKeyboard = false;
-                    initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
-                    keyboardPos = 0;
-                    kbRow = 0; kbCol = 0;
-                    // Restore user state to previous (only if currently PAIRING_CODE)
-                    if (device.getUserState() == PAIRING_CODE) {
-                        device.setUserState(prevUserState);
-                    }
-                    lastActionTime = now;
-                } else if (isButtonClicked(SLCT_BTN_PIN) && device.hasPendingPairMAC()) {
-                    // Start keyboard for initials
-                    showKeyboard = true;
+                }
+                menuState = PAIRING_MODE;
+                showPairingMode();
+                lastActionTime = now;
+            } else if (isButtonClicked(SLCT_BTN_PIN)) {
+                // Accept: transition to keyboard entry
+                if (device.hasPendingPairMAC()) {
+                    menuState = PAIRING_KEYBOARD;
                     keyboardPos = 0;
                     kbRow = 0;
                     kbCol = 0;
                     initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
                     showInitialsKeyboard();
                     lastActionTime = now;
-                } else if (isButtonClicked(RIGHT_BTN_PIN) && device.hasPendingPairMAC()) {
-                    // Reject: add to declined list, clear pending
-                    device.addDeclinedPairMAC(device.getPendingPairMAC());
-                    device.clearPendingPairMAC();
+                } else {
+                    // No pending MAC, return to pairing mode
+                    menuState = PAIRING_MODE;
                     showPairingMode();
                     lastActionTime = now;
                 }
+            } else if (isButtonClicked(RIGHT_BTN_PIN)) {
+                // Optional: treat select as back to pairing mode
+                menuState = PAIRING_MODE;
+                showPairingMode();
+                lastActionTime = now;
             }
             break;
+        }
+        case PAIRING_KEYBOARD:
+        {
+            // Keyboard navigation and input
+            if (isButtonClicked(LEFT_BTN_PIN)) {
+                // Move up a row (wrap)
+                kbRow = (kbRow + 1) % 3;
+                showInitialsKeyboard();
+                lastActionTime = now;
+            } else if (isButtonClicked(RIGHT_BTN_PIN)) {
+                // Move right a column (wrap)
+                kbCol = (kbCol + 1) % 9;
+                showInitialsKeyboard();
+                lastActionTime = now;
+            } else if (isButtonClicked(SLCT_BTN_PIN)) {
+                char selected = keyboard[kbRow][kbCol];
+                if (selected == '<') {
+                    // Delete last character
+                    if (keyboardPos > 0) {
+                        --keyboardPos;
+                        initials[keyboardPos] = 'A';
+                    }
+                    showInitialsKeyboard();
+                } else {
+                    initials[keyboardPos] = selected;
+                    if (keyboardPos == 0) {
+                        keyboardPos = 1;
+                        kbRow = 0; kbCol = 0;
+                        showInitialsKeyboard();
+                    } else {
+                        // Confirm initials, add to peer list
+                        {
+                            std::array<uint8_t, MAC_SIZE> mac = device.getPendingPairMAC();
+                            device.addPeer(mac.data(), String(initials).c_str());
+                        }
+                        keyboardPos = 0;
+                        kbRow = 0;
+                        kbCol = 0;
+                        initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
+                        // Clear pending MAC and return to pairing mode
+                        device.clearPendingPairMAC();
+                        menuState = PAIRING_MODE;
+                        showPairingMode();
+                    }
+                }
+                lastActionTime = now;
+            }
+            break;
+        }
         case MSG_SELECT:
             if (isButtonClicked(RIGHT_BTN_PIN)) {
                 msgSelectIndex = (msgSelectIndex + 1) % msgCount;

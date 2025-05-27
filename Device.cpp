@@ -119,6 +119,7 @@ void Device::addPeer(const uint8_t* macAddress, const std::string& initials) {
     memcpy(info.mac, macAddress, MAC_SIZE);
     info.initials = peerInitials;
     peerList.push_back(info);
+    device.clearPendingPairMAC();
 }
 
 const std::vector<Device::PeerInfo>& Device::getPeerList() const {
@@ -146,12 +147,12 @@ void Device::checkPairingRequest(const MessageStruct& msg) {
 
 void Device::setPendingPairMAC(const std::array<uint8_t, MAC_SIZE>& mac) {
     pendingPairMAC = mac;
-    pendingPairMACValid = true;
+    pendingPair = true;
 }
 
 void Device::clearPendingPairMAC() {
     pendingPairMAC.fill(0);
-    pendingPairMACValid = false;
+    pendingPair = false;
 }
 
 const std::array<uint8_t, MAC_SIZE>& Device::getPendingPairMAC() const {
@@ -159,7 +160,7 @@ const std::array<uint8_t, MAC_SIZE>& Device::getPendingPairMAC() const {
 }
 
 bool Device::hasPendingPairMAC() const {
-    return pendingPairMACValid;
+    return pendingPair;
 }
 
 void Device::addDeclinedPairMAC(const std::array<uint8_t, MAC_SIZE>& mac) {

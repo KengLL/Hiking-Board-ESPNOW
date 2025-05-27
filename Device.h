@@ -64,8 +64,8 @@ private:
     std::vector<MessageStruct> inbox;
     std::vector<MessageStruct> carryMsg;
     // Pairing state
+    bool pendingPair = false;
     std::array<uint8_t, MAC_SIZE> pendingPairMAC = {0};
-    bool pendingPairMACValid = false;
     std::vector<std::array<uint8_t, MAC_SIZE>> declinedPairMACs;
 };
 

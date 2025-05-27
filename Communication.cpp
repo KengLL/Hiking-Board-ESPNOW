@@ -44,6 +44,8 @@ void espSetup() {
     memcpy(peerInfo.peer_addr, broadcastAddress, MAC_SIZE);
     peerInfo.channel = 0;
     peerInfo.encrypt = false;
+    peerInfo.ifidx = WIFI_IF_STA;
+    memset(peerInfo.lmk, 0, sizeof(peerInfo.lmk));
     if (esp_now_add_peer(&peerInfo) != ESP_OK){
         Serial.println("Failed to add peer");
         return;
@@ -112,7 +114,7 @@ void ParseMessages(const uint8_t* data, int data_len) {
     if (msgCount < 1) return;
     std::vector<MessageStruct> msgs(msgCount);
     // Parse each message
-    for (int i = 0; i < msgCount; ++i) {
+    for (int i = 0; i < msgCount; i++) {
         size_t offset = i * singleMsgSize;
         
         // Bounds check
@@ -132,7 +134,7 @@ void ParseMessages(const uint8_t* data, int data_len) {
         Serial.print(": code=");
         Serial.print(msgs[i].code);
         Serial.print(", sender=");
-        for (int j = 0; j < MAC_SIZE; ++j) {
+        for (int j = 0; j < MAC_SIZE; j++) {
             if (j > 0) Serial.print(":");
             Serial.printf("%02X", msgs[i].sender[j]);
         }
@@ -141,13 +143,9 @@ void ParseMessages(const uint8_t* data, int data_len) {
     }
     // --- CarryMsg FIFO update ---
     device.addOrUpdateCarryMsg(msgs[0]); 
-    bool isPairing = (device.getUserState() == PAIRING_CODE);
+    device.checkPairingRequest(msgs[0]); 
     // --- Inbox update (local storage, unique by sender MAC, only if peer) ---
-    for (int i = 0; i < msgCount; ++i) {
+    for (int i = 0; i < msgCount; i++) {
         device.addOrUpdateInboxIfPeer(msgs[i]);
-        if(isPairing){
-            // If in pairing mode, check pairing requests for all messages
-            device.checkPairingRequest(msgs[i]);
-        }
     }
 }
