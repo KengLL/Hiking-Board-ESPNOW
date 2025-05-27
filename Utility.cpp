@@ -1,9 +1,11 @@
 #include "Utility.h"
+#include <cstdio>
+#include <cstring>
 
-// Utility: Convert MAC address vector to string
-std::string macToString(const std::vector<uint8_t>& mac) {
+// Utility: Convert MAC address array to string
+std::string macToString(const uint8_t* mac, size_t size) {
     char macStr[18];
-    if (mac.size() == 6) {
+    if (size == 6 && mac) {
         snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         return std::string(macStr);

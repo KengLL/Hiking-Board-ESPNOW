@@ -8,9 +8,8 @@
 #include "Communication.h"
 
 struct MessageStruct {
-  std::vector<uint8_t> sender;
-  int code;
-  MessageStruct() : sender(MAC_SIZE, 0), code(0) {}
+    uint8_t sender[MAC_SIZE];  // MAC address as array
+    uint8_t code;
 };
 
 const char* MessageMapping(int code);

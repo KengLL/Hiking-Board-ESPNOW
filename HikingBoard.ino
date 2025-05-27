@@ -7,11 +7,11 @@
 
 void setup() {
     Serial.begin(115200);
-
+    delay(2000);
     espSetup();
     deviceSetup();
-    displaySetup();
     buttonSetup();
+    displaySetup();
     menuSetup();
 }
 
@@ -25,4 +25,5 @@ void loop() {
     }
     // Handle button inputs
     menuLoop();
+
 }

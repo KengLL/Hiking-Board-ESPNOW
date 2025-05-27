@@ -3,6 +3,7 @@
 #include "ButtonInput.h"
 #include "Menu.h"
 #include "Device.h"
+#include "Communication.h"
 #include "Utility.h"
 #include "Message.h" // For MessageMapping
 #include <set>
@@ -22,11 +23,11 @@ static const int menuCount = 3;
 
 // Debounce timing (ms)
 static unsigned long lastActionTime = 0;
-static const unsigned long debounceDelay = 350; // Increased from 200 to 300ms
+static const unsigned long debounceDelay = 700; // Increased from 200 to 300ms
 
-static int msgSelectIndex = 0;
-static const int msgCount = 8; // Only 0-7 valid codes for message select
-static const int PAIRING_CODE = 99;
+static uint8_t msgSelectIndex = 0;
+static const uint8_t msgCount = 8; // Only 0-7 valid codes for message select
+static const uint8_t PAIRING_CODE = 99;
 
 static int inboxIndex = 0;
 
@@ -77,15 +78,35 @@ static void showInbox() {
 
     const MessageStruct& msg = inbox[inboxIndex];
 
-    // Top: Sender initials (centered)
-    display.setTextSize(1);
+    // Top left: Sender initials (font size 2)
+    display.setTextSize(2);
     display.setTextColor(SSD1306_WHITE);
-    String sender = device.MACToInitials(msg.sender.data()).c_str();
+    String sender = device.MACToInitials(msg.sender).c_str();
+    display.setCursor(0, 0);
+    display.print(sender);
+
+    // Top right: Time since received (font size 1)
+    display.setTextSize(1);
+    const auto& inboxReceivedMins = device.getInboxReceivedMins();
+    uint16_t now_min = (uint16_t)(millis() / 60000);
+    uint16_t elapsed_min = 0;
+    if (inboxIndex < inboxReceivedMins.size()) {
+        uint16_t received_min = inboxReceivedMins[inboxIndex];
+        if (now_min >= received_min) {
+            elapsed_min = now_min - received_min;
+        }
+    }
+    String timeStr;
+    if (elapsed_min < 60) {
+        timeStr = String(elapsed_min) + "m ago";
+    } else {
+        timeStr = String(elapsed_min / 60) + "h ago";
+    }
     int16_t x1, y1;
     uint16_t w, h;
-    display.getTextBounds(sender, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor((display.width() - w) / 2, 0);
-    display.print(sender);
+    display.getTextBounds(timeStr, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(display.width() - w, 0);
+    display.print(timeStr);
 
     // Middle: Message (centered)
     display.setTextSize(2);
@@ -94,6 +115,8 @@ static void showInbox() {
     int middleY = (display.height() - h) / 2;
     display.setCursor((display.width() - w) / 2, middleY);
     display.print(msgStr);
+
+    // (Time display moved to top right)
 
     // Bottom: "Back" on left, ">" on right
     display.setTextSize(1);
@@ -149,7 +172,7 @@ static bool showKeyboard = false;
 static char initials[3] = {'A', 'A', '\0'};
 static int keyboardPos = 0; // 0 or 1
 
-static int prevUserState = 0;
+static uint8_t prevUserState = 0;
 
 // 3-row keyboard: 26 letters, last char is delete
 static const char keyboard[3][9] = {
@@ -183,41 +206,37 @@ static void showInitialsKeyboard() {
         int y = kbStartY + row * 16;
         int x = 4;
         for (int col = 0; col < 9; ++col) {
-            String key = "";
             if (row == kbRow && col == kbCol) {
-                key += "[";
-                key += (keyboard[row][col] == '<') ? '<' : keyboard[row][col];
-                key += "]";
+                display.setTextColor(SSD1306_BLACK, SSD1306_WHITE); // Highlight: white bg, black text
             } else {
-                key += (keyboard[row][col] == '<') ? '<' : keyboard[row][col];
+                display.setTextColor(SSD1306_WHITE, SSD1306_BLACK); // Normal: white text, black bg
             }
             display.setCursor(x, y);
-            display.print(key);
+            char keyChar = keyboard[row][col];
+            display.print(keyChar);
             x += 14;
         }
     }
+    // Restore default text color
+    display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
 
     display.display();
 }
 
 // Fix: convert std::string to String using .c_str()
 static String macToString_Arduino(const std::vector<uint8_t>& mac) {
-    return String(macToString(mac).c_str());
+    return String(macToString(mac.data(), MAC_SIZE).c_str());
 }
 
 static void showPairingMode() {
     display.clearDisplay();
 
-    // Save previous user state and set to PAIRING_CODE when entering pairing mode
-    if (device.getUserState() != PAIRING_CODE) {
-        prevUserState = device.getUserState();
-        device.setUserState(PAIRING_CODE);
-    }
+
 
     // Top: own MAC
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    String macStr = macToString_Arduino(device.getMACAddress());
+    String macStr = String(macToString(device.getMACAddress(), MAC_SIZE).c_str());
     int16_t x1, y1; uint16_t w, h;
     display.getTextBounds(macStr, 0, 0, &x1, &y1, &w, &h);
     display.setCursor((display.width() - w) / 2, 0);
@@ -254,12 +273,11 @@ static void showPairingMode() {
 // Call this from ParseMessages when in pairing mode
 void checkPairingRequest(const MessageStruct& msg) {
     // Only process if in pairing mode and code is PAIRING (assume code 8 means PAIRING)
-    if (menuState != PAIRING_MODE) return;
-    if (msg.code != 99) return;
+    if(device.getUserState() != PAIRING_CODE || msg.code != PAIRING_CODE) return;
     // Don't show if already peer or declined
     if (device.isPeer(msg.sender)) return;
-    if (declinedPairMACs.count(msg.sender)) return;
-    pendingPairMAC = msg.sender;
+    if (declinedPairMACs.count(std::vector<uint8_t>(msg.sender, msg.sender + MAC_SIZE))) return;
+    pendingPairMAC = std::vector<uint8_t>(msg.sender, msg.sender + MAC_SIZE);
 }
 
 void menuSetup() {
@@ -291,9 +309,23 @@ void menuLoop() {
                 lastActionTime = now;
             } else if (isButtonClicked(SLCT_BTN_PIN)) {
                 switch (menuIndex) {
-                    case 0: menuState = INBOX; showInbox(); break;
-                    case 1: menuState = MSG_SELECT; showMsgSelect(); break;
-                    case 2: menuState = PAIRING_MODE; showPairingMode(); break;
+                    case 0:
+                        menuState = INBOX;
+                        showInbox();
+                        break;
+                    case 1:
+                        menuState = MSG_SELECT;
+                        showMsgSelect();
+                        break;
+                    case 2:
+                        // Only set prevUserState and PAIRING_CODE if not already in pairing mode
+                        if (device.getUserState() != PAIRING_CODE) {
+                            prevUserState = device.getUserState();
+                            device.setUserState(PAIRING_CODE);
+                        }
+                        menuState = PAIRING_MODE;
+                        showPairingMode();
+                        break;
                 }
                 lastActionTime = now;
             }
@@ -368,8 +400,10 @@ void menuLoop() {
                     initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
                     keyboardPos = 0;
                     kbRow = 0; kbCol = 0;
-                    // Restore user state to previous
-                    device.setUserState(prevUserState);
+                    // Restore user state to previous (only if currently PAIRING_CODE)
+                    if (device.getUserState() == PAIRING_CODE) {
+                        device.setUserState(prevUserState);
+                    }
                     lastActionTime = now;
                 } else if (isButtonClicked(SLCT_BTN_PIN) && !pendingPairMAC.empty()) {
                     // Start keyboard for initials

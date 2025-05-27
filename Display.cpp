@@ -1,18 +1,15 @@
 #include "Display.h"
 
+
 TwoWire I2C_one = TwoWire(0);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &I2C_one, OLED_RESET);
 
-void displaySetup(){
-  I2C_one.begin(SDA_PIN, SCL_PIN);
+void displaySetup() {
+  I2C_one.begin(SDA_PIN, SCL_PIN); // GPIO21/20 (from your code)
   display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
 }
 
-/*
-* Function to display messages on OLED Screen.
-* 40 characters max if using text size 2
-*/
-void displayMsg(const char msg[]){
+void displayMsg(const char msg[]) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
