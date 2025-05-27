@@ -405,7 +405,7 @@ void menuLoop() {
         case PAIRING_REQUEST:
         {
             // Handle pairing request acceptance or decline
-            if (isButtonClicked(LEFT_BTN_PIN)) {
+            if (isButtonClicked(RIGHT_BTN_PIN)) {
                 // Decline: add to declined list, clear pending, return to pairing mode
                 if (device.hasPendingPairMAC()) {
                     device.addDeclinedPairMAC(device.getPendingPairMAC());
@@ -430,7 +430,7 @@ void menuLoop() {
                     showPairingMode();
                     lastActionTime = now;
                 }
-            } else if (isButtonClicked(RIGHT_BTN_PIN)) {
+            } else if (isButtonClicked(LEFT_BTN_PIN)) {
                 // Optional: treat select as back to pairing mode
                 menuState = PAIRING_MODE;
                 showPairingMode();
