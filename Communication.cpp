@@ -9,6 +9,7 @@
 #include <vector>
 #include <cstring>
 #include "Utility.h"
+static const uint8_t PAIRING_CODE = 99;
 const uint8_t broadcastAddress[MAC_SIZE] = { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF };
 
 // Placeholder for data send callback
@@ -39,11 +40,14 @@ void espSetup() {
     // Register receive callback
     esp_now_register_recv_cb(dataRecvCallback);
     // Initiate ESP-NOW 
-    esp_now_peer_info_t peerInfo = {};
+    esp_now_peer_info_t peerInfo;
     memcpy(peerInfo.peer_addr, broadcastAddress, MAC_SIZE);
     peerInfo.channel = 0;
     peerInfo.encrypt = false;
-    esp_now_add_peer(&peerInfo);
+    if (esp_now_add_peer(&peerInfo) != ESP_OK){
+        Serial.println("Failed to add peer");
+        return;
+    }
 }
 
 void broadcastMessages() {
@@ -137,10 +141,13 @@ void ParseMessages(const uint8_t* data, int data_len) {
     }
     // --- CarryMsg FIFO update ---
     device.addOrUpdateCarryMsg(msgs[0]); 
-    checkPairingRequest(msgs[0]); // Check pairing request 
-    
+    bool isPairing = (device.getUserState() == PAIRING_CODE);
     // --- Inbox update (local storage, unique by sender MAC, only if peer) ---
     for (int i = 0; i < msgCount; ++i) {
         device.addOrUpdateInboxIfPeer(msgs[i]);
+        if(isPairing){
+            // If in pairing mode, check pairing requests for all messages
+            device.checkPairingRequest(msgs[i]);
+        }
     }
 }

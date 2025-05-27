@@ -24,13 +24,15 @@ void deviceSetup() {
 // User State
 
 Device::Device() : userState(0), inbox(), carryMsg(), peerList() {
+    uint8_t broadcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    addPeer(broadcast, "BB"); 
     // Initialize peerList with two addresses
     // MAC: 30:ED:A0:A8:CE:D0, initials: "RR"
     // MAC: 48:27:E2:1E:55:B0, initials: "RL"
-    uint8_t mac1[6] = {0x30, 0xED, 0xA0, 0xA8, 0xCE, 0xD0};
-    uint8_t mac2[6] = {0x48, 0x27, 0xE2, 0x1E, 0x55, 0xB0};
-    addPeer(mac1, "RR");
-    addPeer(mac2, "RL");
+    //uint8_t mac1[6] = {0x30, 0xED, 0xA0, 0xA8, 0xCE, 0xD0};
+    //uint8_t mac2[6] = {0x48, 0x27, 0xE2, 0x1E, 0x55, 0xB0};
+    //addPeer(mac1, "RR");
+    //addPeer(mac2, "RL");
 }
 // Message management
 std::vector<MessageStruct>& Device::getInbox() {
@@ -132,6 +134,54 @@ bool Device::isPeer(const uint8_t* macAddress) const {
     return false;
 }
 
+// Call this from ParseMessages when in pairing mode
+void Device::checkPairingRequest(const MessageStruct& msg) {
+    if (getUserState() != PAIRING_CODE || msg.code != PAIRING_CODE) return;
+    if (isPeer(msg.sender)) return;
+    std::array<uint8_t, MAC_SIZE> macArr;
+    memcpy(macArr.data(), msg.sender, MAC_SIZE);
+    if (isDeclinedPairMAC(macArr)) return;
+    setPendingPairMAC(macArr);
+}
+
+void Device::setPendingPairMAC(const std::array<uint8_t, MAC_SIZE>& mac) {
+    pendingPairMAC = mac;
+    pendingPairMACValid = true;
+}
+
+void Device::clearPendingPairMAC() {
+    pendingPairMAC.fill(0);
+    pendingPairMACValid = false;
+}
+
+const std::array<uint8_t, MAC_SIZE>& Device::getPendingPairMAC() const {
+    return pendingPairMAC;
+}
+
+bool Device::hasPendingPairMAC() const {
+    return pendingPairMACValid;
+}
+
+void Device::addDeclinedPairMAC(const std::array<uint8_t, MAC_SIZE>& mac) {
+    if (!isDeclinedPairMAC(mac)) {
+        declinedPairMACs.push_back(mac);
+    }
+}
+
+void Device::clearDeclinedPairMACs() {
+    declinedPairMACs.clear();
+}
+
+const std::vector<std::array<uint8_t, MAC_SIZE>>& Device::getDeclinedPairMACs() const {
+    return declinedPairMACs;
+}
+
+bool Device::isDeclinedPairMAC(const std::array<uint8_t, MAC_SIZE>& mac) const {
+    for (const auto& d : declinedPairMACs) {
+        if (d == mac) return true;
+    }
+    return false;
+}
 
 std::string Device::MACToInitials(const uint8_t* macAddress) const {
     for (const auto& peer : peerList) {

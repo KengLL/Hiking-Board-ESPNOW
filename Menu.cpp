@@ -166,8 +166,7 @@ static void showMsgSelect() {
     display.display();
 }
 
-static std::vector<uint8_t> pendingPairMAC;
-static std::set<std::vector<uint8_t>> declinedPairMACs;
+// Pairing state is now managed by Device
 static bool showKeyboard = false;
 static char initials[3] = {'A', 'A', '\0'};
 static int keyboardPos = 0; // 0 or 1
@@ -245,10 +244,11 @@ static void showPairingMode() {
     // Middle: pairing status or found device
     display.setTextSize(2);
     String middle;
-    if (pendingPairMAC.empty()) {
+    if (!device.hasPendingPairMAC()) {
         middle = "Pairing...";
     } else {
-        middle = macToString_Arduino(pendingPairMAC);
+        std::vector<uint8_t> mac(device.getPendingPairMAC().begin(), device.getPendingPairMAC().end());
+        middle = macToString_Arduino(mac);
     }
     display.getTextBounds(middle, 0, 0, &x1, &y1, &w, &h);
     int middleY = (display.height() - h) / 2;
@@ -270,20 +270,11 @@ static void showPairingMode() {
     display.display();
 }
 
-// Call this from ParseMessages when in pairing mode
-void checkPairingRequest(const MessageStruct& msg) {
-    // Only process if in pairing mode and code is PAIRING (assume code 8 means PAIRING)
-    if(device.getUserState() != PAIRING_CODE || msg.code != PAIRING_CODE) return;
-    // Don't show if already peer or declined
-    if (device.isPeer(msg.sender)) return;
-    if (declinedPairMACs.count(std::vector<uint8_t>(msg.sender, msg.sender + MAC_SIZE))) return;
-    pendingPairMAC = std::vector<uint8_t>(msg.sender, msg.sender + MAC_SIZE);
-}
 
 void menuSetup() {
     showMainMenu();
-    pendingPairMAC.clear();
-    declinedPairMACs.clear();
+    device.clearPendingPairMAC();
+    device.clearDeclinedPairMACs();
     showKeyboard = false;
     initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
     keyboardPos = 0;
@@ -378,8 +369,11 @@ void menuLoop() {
                             showInitialsKeyboard();
                         } else {
                             // Confirm initials, add to peer list
-                            device.addPeer(pendingPairMAC.data(), String(initials).c_str());
-                            pendingPairMAC.clear();
+                            {
+                                std::array<uint8_t, MAC_SIZE> mac = device.getPendingPairMAC();
+                                device.addPeer(mac.data(), String(initials).c_str());
+                                device.clearPendingPairMAC();
+                            }
                             showKeyboard = false;
                             keyboardPos = 0;
                             kbRow = 0; kbCol = 0;
@@ -390,12 +384,16 @@ void menuLoop() {
                     lastActionTime = now;
                 }
             } else {
+                if (device.hasPendingPairMAC()) {
+                    // Show pending pairing MAC
+                    showPairingMode();
+                }
                 if (isButtonClicked(LEFT_BTN_PIN)) {
                     menuState = MAIN_MENU;
                     showMainMenu();
                     // Reset pairing state
-                    pendingPairMAC.clear();
-                    declinedPairMACs.clear();
+                    device.clearPendingPairMAC();
+                    device.clearDeclinedPairMACs();
                     showKeyboard = false;
                     initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
                     keyboardPos = 0;
@@ -405,7 +403,7 @@ void menuLoop() {
                         device.setUserState(prevUserState);
                     }
                     lastActionTime = now;
-                } else if (isButtonClicked(SLCT_BTN_PIN) && !pendingPairMAC.empty()) {
+                } else if (isButtonClicked(SLCT_BTN_PIN) && device.hasPendingPairMAC()) {
                     // Start keyboard for initials
                     showKeyboard = true;
                     keyboardPos = 0;
@@ -414,10 +412,10 @@ void menuLoop() {
                     initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
                     showInitialsKeyboard();
                     lastActionTime = now;
-                } else if (isButtonClicked(RIGHT_BTN_PIN) && !pendingPairMAC.empty()) {
+                } else if (isButtonClicked(RIGHT_BTN_PIN) && device.hasPendingPairMAC()) {
                     // Reject: add to declined list, clear pending
-                    declinedPairMACs.insert(pendingPairMAC);
-                    pendingPairMAC.clear();
+                    device.addDeclinedPairMAC(device.getPendingPairMAC());
+                    device.clearPendingPairMAC();
                     showPairingMode();
                     lastActionTime = now;
                 }

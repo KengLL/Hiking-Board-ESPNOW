@@ -43,7 +43,17 @@ public:
     void addOrUpdateCarryMsg(const MessageStruct& msg);
     // Add or update a message in inbox (by sender MAC, only if sender is peer)
     void addOrUpdateInboxIfPeer(const MessageStruct& msg);
-
+    // Pairing request handling
+    void checkPairingRequest(const MessageStruct& msg);
+    // Pairing MAC management
+    void setPendingPairMAC(const std::array<uint8_t, MAC_SIZE>& mac);
+    void clearPendingPairMAC();
+    const std::array<uint8_t, MAC_SIZE>& getPendingPairMAC() const;
+    bool hasPendingPairMAC() const;
+    void addDeclinedPairMAC(const std::array<uint8_t, MAC_SIZE>& mac);
+    void clearDeclinedPairMACs();
+    const std::vector<std::array<uint8_t, MAC_SIZE>>& getDeclinedPairMACs() const;
+    bool isDeclinedPairMAC(const std::array<uint8_t, MAC_SIZE>& mac) const;
     // Track minutes since received for each inbox message
     const std::vector<uint16_t>& getInboxReceivedMins() const;
     std::vector<uint16_t> inboxReceivedMins;
@@ -53,6 +63,10 @@ private:
     std::vector<PeerInfo> peerList; // List of peers (MAC + initials)
     std::vector<MessageStruct> inbox;
     std::vector<MessageStruct> carryMsg;
+    // Pairing state
+    std::array<uint8_t, MAC_SIZE> pendingPairMAC = {0};
+    bool pendingPairMACValid = false;
+    std::vector<std::array<uint8_t, MAC_SIZE>> declinedPairMACs;
 };
 
 #endif // DEVICE_H
