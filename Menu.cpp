@@ -23,11 +23,6 @@ static int menuIndex = 0;
 static const char* menuItems[] = {"Inbox", "Send Msg", "Pairing"};
 static const int menuCount = 3;
 
-// Debounce timing (ms)
-static unsigned long lastActionTime = 0;
-static const unsigned long debounceDelay = 700; // Default debounce
-static const unsigned long keyboardDebounceDelay = 1200; // Longer debounce for keyboard
-
 static uint8_t msgSelectIndex = 0;
 static const uint8_t msgCount = 8; // Only 0-7 valid codes for message select
 static const uint8_t PAIRING_CODE = 99;
@@ -58,9 +53,9 @@ static void showInbox() {
 
     // If inbox is empty
     if (inboxSize == 0) {
-        display.setTextSize(1);
+        display.setTextSize(2);
         display.setTextColor(SSD1306_WHITE);
-        String noMsg = "Inbox Empty";
+        String noMsg = "InboxEmpty";
         int16_t x1, y1;
         uint16_t w, h;
         display.getTextBounds(noMsg, 0, 0, &x1, &y1, &w, &h);
@@ -69,6 +64,7 @@ static void showInbox() {
 
         // Bottom: "Back"
         int bottomY = display.height() - 10;
+        display.setTextSize(1);
         display.setCursor(0, bottomY);
         display.print("Back");
         display.display();
@@ -301,6 +297,20 @@ static void showPairingRequest() {
     display.display();
 }
 
+static bool pairingConfirmed = false; // Add this flag
+
+static void showPairingConfirmed() {
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setTextColor(SSD1306_WHITE);
+    String msg = String(initials[0]) + String(initials[1]) + " Added!";
+    int16_t x1, y1; uint16_t w, h;
+    display.getTextBounds(msg, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((display.width() - w) / 2, (display.height() - h) / 2);
+    display.print(msg);
+    display.display();
+    initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
+}
 
 void menuSetup() {
     showMainMenu();
@@ -314,24 +324,14 @@ void menuSetup() {
 }
 
 void menuLoop() {
-    unsigned long now = millis();
-    unsigned long effectiveDebounce = debounceDelay;
-    if (menuState == PAIRING_KEYBOARD) {
-        effectiveDebounce = keyboardDebounceDelay;
-    }
-    if (now - lastActionTime < effectiveDebounce) {
-        return; // Debounce: ignore input if not enough time has passed
-    }
     switch (menuState) {
         case MAIN_MENU:
             if (isButtonClicked(RIGHT_BTN_PIN)) {
                 menuIndex = (menuIndex + 1) % menuCount;
                 showMainMenu();
-                lastActionTime = now;
             } else if (isButtonClicked(LEFT_BTN_PIN)) {
                 menuIndex = (menuIndex - 1 + menuCount) % menuCount;
                 showMainMenu();
-                lastActionTime = now;
             } else if (isButtonClicked(SLCT_BTN_PIN)) {
                 switch (menuIndex) {
                     case 0:
@@ -352,7 +352,6 @@ void menuLoop() {
                         showPairingMode();
                         break;
                 }
-                lastActionTime = now;
             }
             break;
         case INBOX: {
@@ -361,16 +360,13 @@ void menuLoop() {
             if (isButtonClicked(RIGHT_BTN_PIN) && inboxSize > 0) {
                 inboxIndex = (inboxIndex + 1) % inboxSize;
                 showInbox();
-                lastActionTime = now;
             } else if (isButtonClicked(LEFT_BTN_PIN)) {
                 menuState = MAIN_MENU;
                 showMainMenu();
-                lastActionTime = now;
             } else if (isButtonClicked(SLCT_BTN_PIN)) {
                 // Optionally, treat select as back
                 menuState = MAIN_MENU;
                 showMainMenu();
-                lastActionTime = now;
             }
             break;
         }
@@ -380,7 +376,6 @@ void menuLoop() {
             if (device.hasPendingPairMAC()) {
                 menuState = PAIRING_REQUEST;
                 showPairingRequest();
-                lastActionTime = now;
                 break;
             }
             // Normal pairing mode UI and controls
@@ -398,7 +393,7 @@ void menuLoop() {
                 if (device.getUserState() == PAIRING_CODE) {
                     device.setUserState(prevUserState);
                 }
-                lastActionTime = now;
+                break;
             }
             break;
         }
@@ -413,7 +408,6 @@ void menuLoop() {
                 }
                 menuState = PAIRING_MODE;
                 showPairingMode();
-                lastActionTime = now;
             } else if (isButtonClicked(SLCT_BTN_PIN)) {
                 // Accept: transition to keyboard entry
                 if (device.hasPendingPairMAC()) {
@@ -423,34 +417,38 @@ void menuLoop() {
                     kbCol = 0;
                     initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
                     showInitialsKeyboard();
-                    lastActionTime = now;
                 } else {
                     // No pending MAC, return to pairing mode
                     menuState = PAIRING_MODE;
                     showPairingMode();
-                    lastActionTime = now;
                 }
             } else if (isButtonClicked(LEFT_BTN_PIN)) {
                 // Optional: treat select as back to pairing mode
                 menuState = PAIRING_MODE;
                 showPairingMode();
-                lastActionTime = now;
             }
             break;
         }
         case PAIRING_KEYBOARD:
         {
+            if (pairingConfirmed) {
+                // Wait for any button, then return to pairing mode
+                if (isButtonClicked(LEFT_BTN_PIN) || isButtonClicked(RIGHT_BTN_PIN) || isButtonClicked(SLCT_BTN_PIN)) {
+                    pairingConfirmed = false;
+                    menuState = PAIRING_MODE;
+                    showPairingMode();
+                }
+                break;
+            }
             // Keyboard navigation and input
             if (isButtonClicked(LEFT_BTN_PIN)) {
                 // Move up a row (wrap)
                 kbRow = (kbRow + 1) % 3;
                 showInitialsKeyboard();
-                lastActionTime = now;
             } else if (isButtonClicked(RIGHT_BTN_PIN)) {
                 // Move right a column (wrap)
                 kbCol = (kbCol + 1) % 9;
                 showInitialsKeyboard();
-                lastActionTime = now;
             } else if (isButtonClicked(SLCT_BTN_PIN)) {
                 char selected = keyboard[kbRow][kbCol];
                 if (selected == '<') {
@@ -475,14 +473,13 @@ void menuLoop() {
                         keyboardPos = 0;
                         kbRow = 0;
                         kbCol = 0;
-                        initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
-                        // Clear pending MAC and return to pairing mode
+                        // Clear pending MAC
                         device.clearPendingPairMAC();
-                        menuState = PAIRING_MODE;
-                        showPairingMode();
+                        pairingConfirmed = true;
+                        showPairingConfirmed();
+                        // Wait for button press to return to pairing mode
                     }
                 }
-                lastActionTime = now;
             }
             break;
         }
@@ -490,16 +487,13 @@ void menuLoop() {
             if (isButtonClicked(RIGHT_BTN_PIN)) {
                 msgSelectIndex = (msgSelectIndex + 1) % msgCount;
                 showMsgSelect();
-                lastActionTime = now;
             } else if (isButtonClicked(LEFT_BTN_PIN)) {
                 menuState = MAIN_MENU;
                 showMainMenu();
-                lastActionTime = now;
             } else if (isButtonClicked(SLCT_BTN_PIN)) {
                 device.setUserState(msgSelectIndex);
-                menuState = MAIN_MENU;
-                showMainMenu();
-                lastActionTime = now;
+                menuState = MSG_SELECT;
+                showMsgSelect();
             }
             break;
     }
