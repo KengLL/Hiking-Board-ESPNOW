@@ -11,6 +11,8 @@
 #include <vector>
 #include <esp_system.h>
 #include "esp_wifi.h"
+#include <nvs.h>
+#include <nvs_flash.h>
 
 static const uint8_t PAIRING_CODE = 99;
 Device device;
@@ -33,6 +35,9 @@ Device::Device() : userState(0), inbox(), carryMsg(), peerList() {
     //uint8_t mac2[6] = {0x48, 0x27, 0xE2, 0x1E, 0x55, 0xB0};
     //addPeer(mac1, "RR");
     //addPeer(mac2, "RL");
+    // Load from NVS on construction
+    nvs_flash_init();
+    loadFromNVS();
 }
 // Message management
 std::vector<MessageStruct>& Device::getInbox() {
@@ -69,13 +74,16 @@ void Device::addOrUpdateCarryMsg(const MessageStruct& msg) {
 void Device::addOrUpdateInboxIfPeer(const MessageStruct& msg) {
     if (!isPeer(msg.sender)) return;
     if (msg.code == PAIRING_CODE) return; // Don't add pairing messages to inbox
-    auto it = std::find_if(inbox.begin(), inbox.end(), [&](const MessageStruct& m) {
-        return memcmp(m.sender, msg.sender, MAC_SIZE) == 0;
-    });
     uint16_t now_min = (uint16_t)(millis() / 60000);
-    if (it != inbox.end()) {
-        size_t idx = std::distance(inbox.begin(), it);
-        *it = msg;
+
+    // Only match sender and code, ignore data
+    auto sameMsgIt = std::find_if(inbox.begin(), inbox.end(), [&](const MessageStruct& m) {
+        return memcmp(m.sender, msg.sender, MAC_SIZE) == 0 &&
+               m.code == msg.code;
+    });
+
+    if (sameMsgIt != inbox.end()) {
+        size_t idx = std::distance(inbox.begin(), sameMsgIt);
         if (idx < inboxReceivedMins.size()) {
             inboxReceivedMins[idx] = now_min;
         }
@@ -83,6 +91,7 @@ void Device::addOrUpdateInboxIfPeer(const MessageStruct& msg) {
         inbox.push_back(msg);
         inboxReceivedMins.push_back(now_min);
     }
+    device.inboxUpdated = true;
 }
 
 void Device::setUserState(uint8_t state) {
@@ -120,6 +129,7 @@ void Device::addPeer(const uint8_t* macAddress, const std::string& initials) {
     info.initials = peerInitials;
     peerList.push_back(info);
     device.clearPendingPairMAC();
+    saveToNVS(); // Save peers after change
 }
 
 const std::vector<Device::PeerInfo>& Device::getPeerList() const {
@@ -198,5 +208,83 @@ std::string Device::MACToInitials(const uint8_t* macAddress) const {
     return oss.str();
 }
 
-// When displaying MAC address, use:
-// std::string macStr = macToString(macAddress, 6);
+// Helper functions for NVS serialization
+static const char* NVS_NAMESPACE = "hiking";
+static const char* NVS_KEY_INBOX = "inbox";
+static const char* NVS_KEY_INBOX_TIME = "inbox_time";
+static const char* NVS_KEY_PEERS = "peers";
+
+// Save inbox and peer list to NVS
+void Device::saveToNVS() {
+    nvs_handle_t handle;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return;
+
+    // Save inbox
+    size_t inboxLen = inbox.size() * sizeof(MessageStruct);
+    nvs_set_blob(handle, NVS_KEY_INBOX, inbox.data(), inboxLen);
+
+    // Save inboxReceivedMins
+    size_t minsLen = inboxReceivedMins.size() * sizeof(uint16_t);
+    nvs_set_blob(handle, NVS_KEY_INBOX_TIME, inboxReceivedMins.data(), minsLen);
+
+    // Save peerList
+    // Store as: [PeerInfo][PeerInfo]...
+    size_t peerCount = peerList.size();
+    struct PeerNVS {
+        uint8_t mac[MAC_SIZE];
+        char initials[3];
+    };
+    std::vector<PeerNVS> peersNVS;
+    for (const auto& peer : peerList) {
+        PeerNVS p;
+        memcpy(p.mac, peer.mac, MAC_SIZE);
+        strncpy(p.initials, peer.initials.c_str(), 2);
+        p.initials[2] = '\0';
+        peersNVS.push_back(p);
+    }
+    nvs_set_blob(handle, NVS_KEY_PEERS, peersNVS.data(), peersNVS.size() * sizeof(PeerNVS));
+
+    nvs_commit(handle);
+    nvs_close(handle);
+}
+
+// Load inbox and peer list from NVS
+void Device::loadFromNVS() {
+    nvs_handle_t handle;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) return;
+
+    // Load inbox
+    size_t inboxLen = 0;
+    if (nvs_get_blob(handle, NVS_KEY_INBOX, NULL, &inboxLen) == ESP_OK && inboxLen % sizeof(MessageStruct) == 0) {
+        inbox.resize(inboxLen / sizeof(MessageStruct));
+        nvs_get_blob(handle, NVS_KEY_INBOX, inbox.data(), &inboxLen);
+    }
+
+    // Load inboxReceivedMins
+    size_t minsLen = 0;
+    if (nvs_get_blob(handle, NVS_KEY_INBOX_TIME, NULL, &minsLen) == ESP_OK && minsLen % sizeof(uint16_t) == 0) {
+        inboxReceivedMins.resize(minsLen / sizeof(uint16_t));
+        nvs_get_blob(handle, NVS_KEY_INBOX_TIME, inboxReceivedMins.data(), &minsLen);
+    }
+
+    // Load peerList
+    size_t peersLen = 0;
+    struct PeerNVS {
+        uint8_t mac[MAC_SIZE];
+        char initials[3];
+    };
+    if (nvs_get_blob(handle, NVS_KEY_PEERS, NULL, &peersLen) == ESP_OK && peersLen % sizeof(PeerNVS) == 0) {
+        size_t peerCount = peersLen / sizeof(PeerNVS);
+        std::vector<PeerNVS> peersNVS(peerCount);
+        nvs_get_blob(handle, NVS_KEY_PEERS, peersNVS.data(), &peersLen);
+        peerList.clear();
+        for (const auto& p : peersNVS) {
+            PeerInfo info;
+            memcpy(info.mac, p.mac, MAC_SIZE);
+            info.initials = std::string(p.initials);
+            peerList.push_back(info);
+        }
+    }
+
+    nvs_close(handle);
+}

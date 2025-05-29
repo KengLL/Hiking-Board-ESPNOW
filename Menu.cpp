@@ -357,6 +357,10 @@ void menuLoop() {
         case INBOX: {
             const auto& inbox = device.getInbox();
             int inboxSize = inbox.size();
+            if (device.inboxUpdated){
+                showInbox();
+                device.inboxUpdated = false; // Reset update flag
+            }
             if (isButtonClicked(RIGHT_BTN_PIN) && inboxSize > 0) {
                 inboxIndex = (inboxIndex + 1) % inboxSize;
                 showInbox();

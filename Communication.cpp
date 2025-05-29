@@ -24,7 +24,7 @@ void dataSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 // Placeholder for data receive callback (updated signature for ESP-NOW v5)
 void dataRecvCallback(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len) {
-  ParseMessages(data, data_len);
+    ParseMessages(data, data_len);
 }
 
 void espSetup() {
@@ -148,4 +148,5 @@ void ParseMessages(const uint8_t* data, int data_len) {
     for (int i = 0; i < msgCount; i++) {
         device.addOrUpdateInboxIfPeer(msgs[i]);
     }
+    device.saveToNVS(); // Save inbox and carryMsg after changes
 }

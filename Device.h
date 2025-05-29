@@ -57,6 +57,9 @@ public:
     // Track minutes since received for each inbox message
     const std::vector<uint16_t>& getInboxReceivedMins() const;
     std::vector<uint16_t> inboxReceivedMins;
+    void saveToNVS();
+    void loadFromNVS();
+    bool inboxUpdated = false; // Flag to indicate inbox was updated
 private:
     uint8_t userState;
     uint8_t macAddress[MAC_SIZE];  // Device MAC address
