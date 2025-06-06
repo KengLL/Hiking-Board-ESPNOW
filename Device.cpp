@@ -94,6 +94,14 @@ void Device::addOrUpdateInboxIfPeer(const MessageStruct& msg) {
     device.inboxUpdated = true;
 }
 
+// Remove a peer by index (excluding broadcast)
+void Device::removePeerByIndex(int idx) {
+    // idx is 0-based, but index 0 is broadcast, so idx >= 1
+    if (idx <= 0 || idx >= (int)peerList.size()) return;
+    peerList.erase(peerList.begin() + idx);
+    saveToNVS();
+}
+
 void Device::setUserState(uint8_t state) {
     userState = state;
 }
@@ -130,6 +138,21 @@ void Device::addPeer(const uint8_t* macAddress, const std::string& initials) {
     peerList.push_back(info);
     device.clearPendingPairMAC();
     saveToNVS(); // Save peers after change
+}
+
+void Device::clearPeerList() {
+    peerList.clear();
+    uint8_t broadcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    addPeer(broadcast, "BB");
+    clearInbox();
+    saveToNVS();
+}
+
+void Device::clearInbox() {
+    inbox.clear();
+    inboxReceivedMins.clear();
+    inboxUpdated = true;
+    saveToNVS();
 }
 
 const std::vector<Device::PeerInfo>& Device::getPeerList() const {
@@ -213,6 +236,7 @@ static const char* NVS_NAMESPACE = "hiking";
 static const char* NVS_KEY_INBOX = "inbox";
 static const char* NVS_KEY_INBOX_TIME = "inbox_time";
 static const char* NVS_KEY_PEERS = "peers";
+static const char* NVS_KEY_INBOX_MILLIS = "inbox_millis"; // store minutes since boot
 
 // Save inbox and peer list to NVS
 void Device::saveToNVS() {
@@ -226,6 +250,10 @@ void Device::saveToNVS() {
     // Save inboxReceivedMins
     size_t minsLen = inboxReceivedMins.size() * sizeof(uint16_t);
     nvs_set_blob(handle, NVS_KEY_INBOX_TIME, inboxReceivedMins.data(), minsLen);
+
+    // Save reference time in minutes since boot using esp_timer_get_time()
+    uint32_t refMinutes = (uint32_t)(esp_timer_get_time() / 1000000ULL / 60ULL);
+    nvs_set_u32(handle, NVS_KEY_INBOX_MILLIS, refMinutes);
 
     // Save peerList
     // Store as: [PeerInfo][PeerInfo]...
@@ -263,8 +291,27 @@ void Device::loadFromNVS() {
     // Load inboxReceivedMins
     size_t minsLen = 0;
     if (nvs_get_blob(handle, NVS_KEY_INBOX_TIME, NULL, &minsLen) == ESP_OK && minsLen % sizeof(uint16_t) == 0) {
-        inboxReceivedMins.resize(minsLen / sizeof(uint16_t));
+        size_t count = minsLen / sizeof(uint16_t);
+        inboxReceivedMins.resize(count);
         nvs_get_blob(handle, NVS_KEY_INBOX_TIME, inboxReceivedMins.data(), &minsLen);
+    } else {
+        inboxReceivedMins.clear();
+    }
+
+    // Ensure inboxReceivedMins matches inbox size
+    if (inboxReceivedMins.size() != inbox.size()) {
+        inboxReceivedMins.resize(inbox.size(), 0);
+    }
+
+    // Load and adjust inboxReceivedMins by minutes reference
+    uint32_t savedMinutes = 0;
+    if (nvs_get_u32(handle, NVS_KEY_INBOX_MILLIS, &savedMinutes) == ESP_OK && savedMinutes > 0) {
+        uint32_t nowMinutes = (uint32_t)(esp_timer_get_time() / 1000000ULL / 60ULL);
+        int32_t minDiff = (int32_t)(nowMinutes - savedMinutes);
+        for (auto& t : inboxReceivedMins) {
+            int32_t adjusted = (int32_t)t + minDiff;
+            t = (adjusted >= 0) ? (uint16_t)adjusted : 0;
+        }
     }
 
     // Load peerList

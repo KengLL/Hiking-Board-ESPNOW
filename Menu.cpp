@@ -15,13 +15,14 @@ enum MenuState {
     MSG_SELECT,
     PAIRING_MODE,
     PAIRING_REQUEST,
-    PAIRING_KEYBOARD
+    PAIRING_KEYBOARD,
+    PEER_LIST // Add new state
 };
 
 static MenuState menuState = MAIN_MENU;
 static int menuIndex = 0;
-static const char* menuItems[] = {"Inbox", "Send Msg", "Pairing"};
-static const int menuCount = 3;
+static const char* menuItems[] = {"Inbox", "Send Msg", "Pairing", "Peers"};
+static const int menuCount = 4;
 
 static uint8_t msgSelectIndex = 0;
 static const uint8_t msgCount = 8; // Only 0-7 valid codes for message select
@@ -166,10 +167,8 @@ static void showMsgSelect() {
 }
 
 // Pairing state is now managed by Device
-static char initials[3] = {'A', 'A', '\0'};
+static char initials[3] = {'_', '_', '\0'};
 static int keyboardPos = 0; // 0 or 1
-
-static uint8_t prevUserState = 0;
 
 // 3-row keyboard: 26 letters, last char is delete
 static const char keyboard[3][9] = {
@@ -177,15 +176,17 @@ static const char keyboard[3][9] = {
     {'J','K','L','M','N','O','P','Q','R'},
     {'S','T','U','V','W','X','Y','Z','<'} // '<' means delete
 };
-static int kbRow = 0;
-static int kbCol = 0;
+static int kbRow = 1; // Start at row 1 (N)
+static int kbCol = 4; // Start at col 4 (N)
+
+static uint8_t prevUserState = 0;
 
 static void showInitialsKeyboard() {
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
 
-    // Top: Initials
+    // Top: Initials (show '_' for unset)
     String iniStr = "Initials: ";
     for (int i = 0; i < 2; ++i) {
         iniStr += initials[i];
@@ -219,8 +220,6 @@ static void showInitialsKeyboard() {
 
     display.display();
 }
-
-
 
 static void showPairingMode() {
     display.clearDisplay();
@@ -309,18 +308,66 @@ static void showPairingConfirmed() {
     display.setCursor((display.width() - w) / 2, (display.height() - h) / 2);
     display.print(msg);
     display.display();
-    initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
+    initials[0] = '_'; initials[1] = '_'; initials[2] = '\0';
+}
+
+static int peerListIndex = 0; // For navigating peer list
+
+static void showPeerList() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+
+    const auto& peers = device.getPeerList();
+    // Skip the first peer (assumed to be broadcast)
+    int peerCount = peers.size() > 1 ? peers.size() - 1 : 0;
+
+    int16_t x1, y1; uint16_t w, h;
+    int y = 0;
+
+    // Show up to 4 peers per page (adjust as needed)
+    int itemsPerPage = 4;
+    int pageStart = (peerListIndex / itemsPerPage) * itemsPerPage;
+    int pageEnd = min(pageStart + itemsPerPage, peerCount);
+
+    for (int idx = pageStart; idx < pageEnd; ++idx) {
+        int i = idx + 1; // skip index 0 (broadcast)
+        String ini = String(peers[i].initials.c_str());
+        String mac = macToString_Arduino(peers[i].mac, MAC_SIZE);
+        String line = ini + ": " + mac;
+        display.getTextBounds(line, 0, 0, &x1, &y1, &w, &h);
+        display.setCursor(0, y);
+        if (idx == peerListIndex) {
+            display.setTextColor(SSD1306_BLACK, SSD1306_WHITE); // Highlight
+        } else {
+            display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+        }
+        display.print(line);
+        y += 12;
+    }
+
+    // "Clear All" option at the end
+    display.setTextColor(peerListIndex == peerCount ? SSD1306_BLACK : SSD1306_WHITE,
+                        peerListIndex == peerCount ? SSD1306_WHITE : SSD1306_BLACK);
+    String clearStr = "Clear All";
+    display.getTextBounds(clearStr, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(0, y);
+    display.print(clearStr);
+
+    display.setTextColor(SSD1306_WHITE, SSD1306_BLACK); // Restore
+
+    display.display();
 }
 
 void menuSetup() {
     showMainMenu();
     device.clearPendingPairMAC();
     device.clearDeclinedPairMACs();
-    initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
+    initials[0] = '_'; initials[1] = '_'; initials[2] = '\0';
     keyboardPos = 0;
-    kbRow = 0;
-    kbCol = 0;
+    kbRow = 1; kbCol = 4; // Start at 'N'
     prevUserState = 0;
+    peerListIndex = 0;
 }
 
 void menuLoop() {
@@ -351,6 +398,11 @@ void menuLoop() {
                         menuState = PAIRING_MODE;
                         showPairingMode();
                         break;
+                    case 3:
+                        peerListIndex = 0;
+                        menuState = PEER_LIST;
+                        showPeerList();
+                        break;
                 }
             }
             break;
@@ -367,10 +419,10 @@ void menuLoop() {
             } else if (isButtonClicked(LEFT_BTN_PIN)) {
                 menuState = MAIN_MENU;
                 showMainMenu();
-            } else if (isButtonClicked(SLCT_BTN_PIN)) {
+            } else if (isButtonClicked(SLCT_BTN_PIN) && inboxSize > 0) {
                 // Optionally, treat select as back
-                menuState = MAIN_MENU;
-                showMainMenu();
+                inboxIndex = (inboxIndex - 1) % inboxSize;
+                showInbox();
             }
             break;
         }
@@ -389,10 +441,9 @@ void menuLoop() {
                 // Reset pairing state
                 device.clearPendingPairMAC();
                 device.clearDeclinedPairMACs();
-                initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
+                initials[0] = '_'; initials[1] = '_'; initials[2] = '\0';
                 keyboardPos = 0;
-                kbRow = 0;
-                kbCol = 0;
+                kbRow = 1; kbCol = 4; // Reset to 'N'
                 // Restore user state to previous (only if currently PAIRING_CODE)
                 if (device.getUserState() == PAIRING_CODE) {
                     device.setUserState(prevUserState);
@@ -417,9 +468,8 @@ void menuLoop() {
                 if (device.hasPendingPairMAC()) {
                     menuState = PAIRING_KEYBOARD;
                     keyboardPos = 0;
-                    kbRow = 0;
-                    kbCol = 0;
-                    initials[0] = 'A'; initials[1] = 'A'; initials[2] = '\0';
+                    kbRow = 1; kbCol = 4; // Reset to 'N'
+                    initials[0] = '_'; initials[1] = '_'; initials[2] = '\0';
                     showInitialsKeyboard();
                 } else {
                     // No pending MAC, return to pairing mode
@@ -428,8 +478,9 @@ void menuLoop() {
                 }
             } else if (isButtonClicked(LEFT_BTN_PIN)) {
                 // Optional: treat select as back to pairing mode
-                menuState = PAIRING_MODE;
-                showPairingMode();
+                menuState = MAIN_MENU;
+                device.clearPendingPairMAC();
+                showMainMenu();
             }
             break;
         }
@@ -459,14 +510,14 @@ void menuLoop() {
                     // Delete last character
                     if (keyboardPos > 0) {
                         --keyboardPos;
-                        initials[keyboardPos] = 'A';
+                        initials[keyboardPos] = '_';
                     }
                     showInitialsKeyboard();
                 } else {
                     initials[keyboardPos] = selected;
                     if (keyboardPos == 0) {
                         keyboardPos = 1;
-                        kbRow = 0; kbCol = 0;
+                        kbRow = 1; kbCol = 4; // Reset to 'N'
                         showInitialsKeyboard();
                     } else {
                         // Confirm initials, add to peer list
@@ -475,8 +526,7 @@ void menuLoop() {
                             device.addPeer(mac.data(), String(initials).c_str());
                         }
                         keyboardPos = 0;
-                        kbRow = 0;
-                        kbCol = 0;
+                        kbRow = 1; kbCol = 4; // Reset to 'N'
                         // Clear pending MAC
                         device.clearPendingPairMAC();
                         pairingConfirmed = true;
@@ -500,5 +550,35 @@ void menuLoop() {
                 showMsgSelect();
             }
             break;
+        case PEER_LIST: {
+            const auto& peers = device.getPeerList();
+            // Skip the first peer (assumed to be broadcast)
+            int peerCount = peers.size() > 1 ? peers.size() - 1 : 0;
+            int totalItems = peerCount + 1; // +1 for "Clear All"
+            if (isButtonClicked(RIGHT_BTN_PIN)) {
+                peerListIndex = (peerListIndex + 1) % totalItems;
+                showPeerList();
+            } else if (isButtonClicked(LEFT_BTN_PIN)) {
+                // Left (up) returns to menu, does not iterate
+                menuState = MAIN_MENU;
+                showMainMenu();
+            } else if (isButtonClicked(SLCT_BTN_PIN)) {
+                if (peerListIndex == peerCount) {
+                    // "Clear All" selected
+                    device.clearPeerList();
+                    peerListIndex = 0;
+                    showPeerList();
+                } else if (peerListIndex < peerCount) {
+                    // Remove specific peer (indexing: +1 for broadcast)
+                    device.removePeerByIndex(peerListIndex + 1);
+                    // After removal, clamp index if needed
+                    const auto& peers = device.getPeerList();
+                    int newPeerCount = peers.size() > 1 ? peers.size() - 1 : 0;
+                    if (peerListIndex >= newPeerCount) peerListIndex = 0;
+                    showPeerList();
+                }
+            }
+            break;
+        }
     }
 }

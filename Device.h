@@ -1,3 +1,4 @@
+
 #ifndef DEVICE_H
 #define DEVICE_H
 
@@ -31,10 +32,14 @@ public:
         std::string initials;
     };
     
+        // Remove a peer by index (excluding broadcast)
+    void removePeerByIndex(int idx);
     void addPeer(const uint8_t* macAddress, const std::string& initials = "");
     bool isPeer(const uint8_t* macAddress) const;
     std::string MACToInitials(const uint8_t *macAddress) const;
     const std::vector<PeerInfo>& getPeerList() const;
+    void clearPeerList();
+    void clearInbox();
 
     // Message management
     std::vector<MessageStruct>& getInbox();
@@ -56,7 +61,6 @@ public:
     bool isDeclinedPairMAC(const std::array<uint8_t, MAC_SIZE>& mac) const;
     // Track minutes since received for each inbox message
     const std::vector<uint16_t>& getInboxReceivedMins() const;
-    std::vector<uint16_t> inboxReceivedMins;
     void saveToNVS();
     void loadFromNVS();
     bool inboxUpdated = false; // Flag to indicate inbox was updated
@@ -66,6 +70,7 @@ private:
     std::vector<PeerInfo> peerList; // List of peers (MAC + initials)
     std::vector<MessageStruct> inbox;
     std::vector<MessageStruct> carryMsg;
+    std::vector<uint16_t> inboxReceivedMins;
     // Pairing state
     bool pendingPair = false;
     std::array<uint8_t, MAC_SIZE> pendingPairMAC = {0};

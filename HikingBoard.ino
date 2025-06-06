@@ -19,7 +19,7 @@ void loop() {
     // Broadcast messages every 5 seconds, or every 1 second in pairing mode
     static unsigned long lastBroadcast = 0;
     unsigned long now = millis();
-    unsigned long broadcastInterval = (device.getUserState() == 99) ? 50 : 500;
+    unsigned long broadcastInterval = (device.getUserState() == 99) ? 50 : 750;
     if (now - lastBroadcast >= broadcastInterval) {
         broadcastMessages();
         lastBroadcast = now;
